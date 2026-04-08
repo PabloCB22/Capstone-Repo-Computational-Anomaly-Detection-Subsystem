@@ -1,12 +1,11 @@
 # Capstone-Repo-Computational-Anomaly-Detection-Subsystem
-repo for my EE undergrade senior capstone project (real time cyber threat detector)
+Repo for my EE undergraduate senior capstone project (real-time cyber threat detector)
 
-Purpose of this code is real time analysis of compotational data (CPU usage, CPU temp, mem%)
-to monitor for potential Flood/DDOS attacks on edge-decives within a C2 kubernetes cluster 
+Purpose of this code is real-time analysis of computational data (CPU usage, CPU temp, mem%)
+to monitor for potential flood/DDoS attacks on edge devices within a C2 Kubernetes cluster.
 
-- Detector uses a statistical analysis (modified Z-score) to detect any anomalies as data comes through
-- Detector samples data to adjust parameters for anomaly behavior through time 
-- Detector uses a ROS2_Humble Subscriber to recive data (20Hz)
-- Detector averages data points to account for telemetry noise from edge device
-- Detector coded entierly in c++ and multithreaded to be as fast as possible
-  
+- Detector uses statistical analysis (modified Z-score) to detect anomalies as data comes through
+- Detector samples data to adjust parameters for anomaly behavior over time
+- Detector uses a ROS2 Humble subscriber to receive data (20 Hz)
+- Detector averages data points to account for telemetry noise from edge devices
+- Detector is coded entirely in C++ and multithreaded to be as fast as possible
