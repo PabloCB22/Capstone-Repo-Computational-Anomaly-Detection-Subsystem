@@ -4,6 +4,7 @@
 #include <chrono>
 #include "ModZ.h"
 #include <iostream>
+#include <iomanip>
 #include <fstream>
 #include <sstream>
 #include <string>
@@ -13,7 +14,7 @@
 #include <numeric>
 
 using namespace std;
-
+//helper function
 float median(std::vector<float> data) {
     if (data.empty()) return 0.0;
     std::sort(data.begin(), data.end());
@@ -24,7 +25,7 @@ float median(std::vector<float> data) {
         return data[n/2];
 }
 
- 
+ // API call to UI
 bool send_alert(const std::string& message,
                 const std::string& severity,
                 const std::string& source,
@@ -91,10 +92,12 @@ bool send_alert(const std::string& message,
  
 
 //-- buff --
-// uses a deque of a certain size 
+// overloaded function to be used to get rid on noisy data
+// uses a deque (list) of a certain size 
 // after the deque becomes the certain size it calcs the averages
 // if a new point gets seen, pops the old and pushes the new
 // returns the average aftewards
+
 
 float buff(Stat_stuff &sample,int size, float value ){
     if(int(sample.buffer.size()) != size){
@@ -110,8 +113,22 @@ float buff(Stat_stuff &sample,int size, float value ){
     return sample.avg;
 }
 
+float buff(Stat_stuff &sample, float value ){
+    int size = 20;
+    if(int(sample.buffer_z.size()) != size){
+        sample.buffer_z.push_back(value);
+        return 0;
+    }else if( (int(sample.buffer_z.size()) == size) && (sample.Z_avg == 0) ){ 
+        sample.Z_avg = std::accumulate(sample.buffer_z.begin(), sample.buffer_z.end(), 0.0);
+        sample.Z_avg = sample.Z_avg / size;
+    }
+    sample.Z_avg = sample.Z_avg -(sample.buffer_z.front()/size) + (value/size);
+    sample.buffer_z.pop_front();
+    sample.buffer_z.push_back(value);
+    return sample.Z_avg;
+}
 
-
+//Samples data to get the parameters fir analysis
 void sample(float value, int num_samples, Stat_stuff &sample,int buffer){
     if(int(sample.sample_data.size()) < num_samples){    //not enough samples
         if(buff(sample,buffer,value) != 0){
@@ -146,10 +163,10 @@ void sample(float value, int num_samples, Stat_stuff &sample,int buffer){
 }
 
 
-
+//helper functions
 bool Mod_Z (float value, Stat_stuff &sample,float threshold){
     float mz = 0.6745f * (value - sample.med) / sample.mad;
-    if(abs(mz) >  threshold){
+    if(buff(sample, mz) >  threshold){
         return true;
     } 
     return false;
@@ -160,15 +177,15 @@ float Mod_Z (float value, Stat_stuff &sample){
 }
 
 
-
+//filtering any data spikes while processing data
 bool spike_filter( float time, float &prev_t,float &T_time){
-    if((time - prev_t)> 0.3){
+    if((time - prev_t)> 0.5){
         T_time = 0;
 
     }else{
         T_time += time - prev_t;;
         
-        if(T_time >.5){
+        if(T_time > 3.75){
             return true;
         }
     }
@@ -180,28 +197,33 @@ bool spike_filter( float time, float &prev_t,float &T_time){
 
 /*
     type:
-    1 - CPU Usage   (fixed after sampling)
-    2 - Mem% and temp (adaptive changes)
+    1 - CPU Usage   
+    2 - Mem% 
+    3 - temp 
+
+    after some testing certain values need to be fixed for the best results
+    these values are gathered from pervious benign runs 
 */
 
 bool attack_Detection(float value, float time, int num_samples, Stat_stuff &sampling, int type) {
     // Configuration
-    const int buf_sz = (type == 1) ? 20 : 20;
-    const float thresh = (type == 1) ? 3.4f : 5.0f;
+    const int buf_sz = (type == 1) ? 120 : 20;      // buffer sizes
+    const float thresh = (type == 1) ? 5.5f : 3.0f; // modify Z-score threshold
     
             
     // Fast path: still sampling
     if (!sampling.Data_Sample_complete) {
-        int samples = (sampling.count != 0) ? 100 : num_samples;
+        int samples = (sampling.count != 0) ? 100 : num_samples; 
         sample(value, samples, sampling, buf_sz);
         if(type == 1){
             sampling.mean =50.5153;
-            sampling.mad = 5.01726;
+            sampling.mad = 5.01726; 
             sampling.med=50.5153;
         }else if(type == 2){
-            sampling.mean =33.603;
-            //sampling.mad = 0.121775;
-            sampling.med=33.603;
+            sample(value, samples, sampling, buf_sz); // resample values
+            //sampling.mean =33.603;
+            sampling.mad = 0.121775;
+            //sampling.med=33.603;
         }else{
             //sampling.mean =33.603;
             sampling.mad = 0.01775;
@@ -225,29 +247,33 @@ bool attack_Detection(float value, float time, int num_samples, Stat_stuff &samp
 
 
     // Type 2 specific: adaptive threshold adjustment
-    //if (type == 2) {
+    if (type == 2 || type ==3) {
         if (sampling.avg > sampling.max_num) {
             sampling.max_num = sampling.avg;
             sampling.count = 0;
         } else {
-            if (++sampling.count >= 200) {
+            if (++sampling.count >= 500) {
                 sampling.sample_data.clear();
                 sampling.Data_Sample_complete = false;
                 sampling.count = 0;
             }
         }
-    //}
+    }
     
     return true;
 }
 
-//
+
 
 /*
     type:
     1 - CPU Usage 
     2 - Mem% 
     3 - Temp
+
+    API call with limiters to not spam UI, plus more information on the detection
+
+    one for return to Benighn the other for Attack detected
 
 */
 struct MetricInfo {
@@ -268,13 +294,13 @@ struct MetricInfo {
 static const std::unordered_map<int, MetricInfo> METRIC_LOOKUP = {
     {1, {"CPU usage", "%", 
          "CPU anomaly detected", "computational anomaly", "CPU Usage abnormal", "CPU",
-         "CPU anomaly resolved", "computational recovery", "CPU Usage normal", "return to normal, temp & mem may still be fluctuating"}},
+         "CPU anomaly resolved", "computational anomaly", "CPU Usage normal", "return to normal"}},
     {2, {"CPU memory", "MB",
-         "Memory anomaly detected", "memory anomaly", "CPU Memory abnormal", "Memory",
-         "Memory anomaly resolved", "memory recovery", "CPU Memory normal", "return to normal"}},
+         "Memory anomaly detected", "computational anomaly", "CPU Memory abnormal", "Memory",
+         "Memory anomaly resolved", "computational anomaly", "CPU Memory normal", "return to normal"}},
     {3, {"CPU temp", "°C",
-         "Temperature anomaly detected", "thermal anomaly", "CPU Temp abnormal", "Temp",
-         "Temperature anomaly resolved", "thermal recovery", "CPU Temp normal", "return to normal"}}
+         "Temperature anomaly detected", "computational anomaly", "CPU Temp abnormal", "Temp",
+         "Temperature anomaly resolved", "computational anomaly", "CPU Temp normal", "return to normal"}}
 };
 
 void API_call(bool trigger, int type, bool &prev, int &falseCount, float time, Stat_stuff &sample) {
@@ -293,7 +319,7 @@ void API_call(bool trigger, int type, bool &prev, int &falseCount, float time, S
         falseCount++;
     }
     else if (trigger && !prev) {
-        if(falseCount >= 300 && z_score < 4.9) {
+        if(falseCount >= 200 && z_score < 3) {
             // Return to benign - TIMING VERSION
             auto terminal_start = std::chrono::steady_clock::now();
             
@@ -307,28 +333,45 @@ void API_call(bool trigger, int type, bool &prev, int &falseCount, float time, S
             // API Call with timing
             auto api_call_start = std::chrono::steady_clock::now();
             
-            std::string json = "{\"" + metric.alert_json_key + "\":\"" + metric.recovery_message + "\"}";
+            // BUILD JSON WITH TIMING DATA
+            std::ostringstream json_stream;
+            json_stream << std::fixed << std::setprecision(2);
+            json_stream << "{"
+                        << "\"" << metric.alert_json_key << "\":\"sudden change\","
+                        << "\"timestamp\":" << time << ","
+                        << "\"z_score\":" << z_score << ","
+                        << "\"value\":" << sample.avg << ","
+                        << "\"terminal_time_us\":" << terminal_time.count()
+                        << "}"; 
+            std::string json = json_stream.str();
+            
             bool api_success = send_alert(metric.recovery_title, "low", metric.recovery_category, 
                       metric.recovery_description, 1, json);
             
             auto api_call_end = std::chrono::steady_clock::now();
-            auto api_call_time = std::chrono::duration_cast<std::chrono::microseconds>(api_call_end - api_call_start);
+            auto api_call_time = std::chrono::duration_cast<std::chrono::milliseconds>(api_call_end - api_call_start);
+            
             
             // Total time from data reception
             if (sample.timing_active) {
-                auto total_time = std::chrono::duration_cast<std::chrono::microseconds>(api_call_end - sample.start_time);
-                std::cout << "Terminal: " << terminal_time.count() << " μs | "
-                         << "API: " << api_call_time.count() << " μs | "
-                         << "Total: " << total_time.count() << " μs "
+                auto total_time = std::chrono::duration_cast<std::chrono::milliseconds>(api_call_end - sample.start_time);
+                json_stream << ","
+                           << "\"total_time_ms\":" << total_time.count()
+                           << "}";
+                
+                std::cout << "  ⏱  Terminal: " << terminal_time.count() << " μs | "
+                         << "API: " << api_call_time.count() << " ms | "
+                         << "Total: " << total_time.count() << " ms "
                          << (api_success ? "[✓]" : "[✗]") << std::endl << std::endl;
                 sample.timing_active = false;
             } else {
-                std::cout << "Terminal: " << terminal_time.count() << " μs | "
-                         << "API: " << api_call_time.count() << " μs "
+                json_stream << "}";
+                std::cout << "  ⏱  Terminal: " << terminal_time.count() << " μs | "
+                         << "API: " << api_call_time.count() << " ms "
                          << (api_success ? "[✓]" : "[✗]") << std::endl << std::endl;
             }
         }
-        else if (falseCount >= 300) {
+        else if (falseCount >= 500) {
             // Anomaly detected - TIMING VERSION
             auto terminal_start = std::chrono::steady_clock::now();
             
@@ -342,24 +385,43 @@ void API_call(bool trigger, int type, bool &prev, int &falseCount, float time, S
             // API Call with timing
             auto api_call_start = std::chrono::steady_clock::now();
             
-            std::string json = "{\"" + metric.alert_json_key + "\":\"sudden change\"}";
+            // BUILD JSON WITH TIMING DATA
+            std::ostringstream json_stream;
+            json_stream << std::fixed << std::setprecision(2);
+            json_stream << "{"
+                        << "\"" << metric.alert_json_key << "\":\"sudden change\","
+                        << "\"timestamp\":" << time << ","
+                        << "\"z_score\":" << z_score << ","
+                        << "\"value\":" << sample.avg << ","
+                        << "\"terminal_time_us\":" << terminal_time.count()
+                        << "}"; 
+            
+            std::string json = json_stream.str();
+            
             bool api_success = send_alert(metric.alert_title, "high", metric.alert_category, 
                       metric.alert_description, 1, json);
             
             auto api_call_end = std::chrono::steady_clock::now();
-            auto api_call_time = std::chrono::duration_cast<std::chrono::microseconds>(api_call_end - api_call_start);
+            auto api_call_time = std::chrono::duration_cast<std::chrono::milliseconds>(api_call_end - api_call_start);
+            
+
             
             // Total time from data reception
             if (sample.timing_active) {
-                auto total_time = std::chrono::duration_cast<std::chrono::microseconds>(api_call_end - sample.start_time);
-                std::cout << "Terminal: " << terminal_time.count() << " μs | "
-                         << "API: " << api_call_time.count() << " μs | "
-                         << "Total: " << total_time.count() << " μs "
+                auto total_time = std::chrono::duration_cast<std::chrono::milliseconds>(api_call_end - sample.start_time);
+                json_stream << ","
+                           << "\"total_time_ms\":" << total_time.count()
+                           << "}";
+                
+                std::cout << "  ⏱  Terminal: " << terminal_time.count() << " μs | "
+                         << "API: " << api_call_time.count() << " ms | "
+                         << "Total: " << total_time.count() << " ms "
                          << (api_success ? "[✓]" : "[✗]") << std::endl << std::endl;
                 sample.timing_active = false;
             } else {
-                std::cout << "Terminal: " << terminal_time.count() << " μs | "
-                         << "API: " << api_call_time.count() << " μs "
+                json_stream << "}";
+                std::cout << "  ⏱  Terminal: " << terminal_time.count() << " μs | "
+                         << "API: " << api_call_time.count() << " ms "
                          << (api_success ? "[✓]" : "[✗]") << std::endl << std::endl;
             }
         }

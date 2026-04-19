@@ -10,6 +10,8 @@
 struct Stat_stuff {
     std::deque<float> buffer;
     std::vector<float> sample_data;
+    std::deque<float> buffer_z;
+    float Z_avg = 0;
     float avg = 0;
     float med = 0;
     float mad = 0;
@@ -35,6 +37,7 @@ bool send_alert(const std::string& message,
                 int confidence,
                 const std::string& data_json);
 float buff(Stat_stuff &sample, int size, float value);
+float buff(Stat_stuff &sample, float value );
 void sample(float value, int num_samples, Stat_stuff &sample, int buffer);
 bool Mod_Z(float value, Stat_stuff &sample, float threshold);
 float Mod_Z(float value, Stat_stuff &sample);

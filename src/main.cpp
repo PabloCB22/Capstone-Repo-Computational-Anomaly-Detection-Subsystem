@@ -13,13 +13,15 @@
  
 // ROS2
 #include "rclcpp/rclcpp.hpp"
-#include "std_msgs/msg/float32_multi_array.hpp"  // Changed to lowercase
+#include "std_msgs/msg/float32_multi_array.hpp"  
  
 #include "ModZ.h"
  
 using std::placeholders::_1;
 using std::cout;
  
+// ROS 2 Subcriber, getting data from publisher
+// uses multitreading to calculate each of the parameters individualy 
 class DetectorNode : public rclcpp::Node
 {
 public:
@@ -93,20 +95,14 @@ private:
         future2.wait();
         future3.wait();
         
-        // CALCULATE TOTAL CALLBACK TIME (optional logging)
         auto callback_end = std::chrono::steady_clock::now();
         auto callback_duration = std::chrono::duration_cast<std::chrono::microseconds>(callback_end - callback_start);
         
-        // Optional: Log total processing time periodically
-        /* static int callback_count = 0;
-        if (++callback_count % 100 == 0) {
-            RCLCPP_INFO(this->get_logger(), "Total callback processing time: %.3f ms", 
-                       callback_duration.count() / 1000.0);
-        } */
+
     }
  
     rclcpp::Subscription<std_msgs::msg::Float32MultiArray>::SharedPtr pi_metrics_sub_;
- 
+    // defining the variables needed
     std::mutex cpu_mutex_;
     std::mutex mem_mutex_;
     std::mutex temp_mutex_;
